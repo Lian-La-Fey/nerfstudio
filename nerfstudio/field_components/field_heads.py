@@ -25,9 +25,12 @@ from torch import Tensor, nn
 
 from nerfstudio.field_components.base_field_component import FieldComponent
 
-
 class FieldHeadNames(Enum):
     """Possible field outputs"""
+    RAW_RGB = "raw_rgb"
+    ILLUMINATION = "illumination"
+    GAMMA = "gamma"
+    CONCEALING = "concealing",
 
     RGB = "rgb"
     SH = "sh"

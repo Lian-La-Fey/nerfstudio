@@ -60,6 +60,8 @@ from nerfstudio.models.semantic_nerfw import SemanticNerfWModelConfig
 from nerfstudio.models.splatfacto import SplatfactoModelConfig
 from nerfstudio.models.tensorf import TensoRFModelConfig
 from nerfstudio.models.vanilla_nerf import NeRFModel, VanillaModelConfig
+from nerfstudio.models.lowlight_nerfacto import LowLightNerfactoModelConfig, LowLightNerfactoModel
+
 from nerfstudio.pipelines.base_pipeline import VanillaPipelineConfig
 from nerfstudio.pipelines.dynamic_batch import DynamicBatchPipelineConfig
 from nerfstudio.plugins.registry import discover_methods
@@ -82,7 +84,54 @@ descriptions = {
     "neus-facto": "Implementation of NeuS-Facto. (slow)",
     "splatfacto": "Gaussian Splatting model",
     "splatfacto-big": "Larger version of Splatfacto with higher quality.",
+    "lowlight-nerfacto": "Nerfacto-based low-light optimized model.",
 }
+
+method_configs["lowlight-nerfacto"] = TrainerConfig(
+    method_name="lowlight-nerfacto",
+    steps_per_eval_batch=500,
+    steps_per_save=2000,
+    max_num_iterations=30000,
+    mixed_precision=True,
+    pipeline=VanillaPipelineConfig(
+        datamanager=ParallelDataManagerConfig(
+            dataparser=NerfstudioDataParserConfig(),
+            train_num_rays_per_batch=4096,
+            eval_num_rays_per_batch=4096,
+        ),
+        model=LowLightNerfactoModelConfig(
+            eval_num_rays_per_chunk=1 << 15,
+            average_init_density=2.0,
+            camera_optimizer=CameraOptimizerConfig(mode="SO3xR3"),
+            use_illumination_mlp=True,
+            use_gamma_correction=True,
+            use_concealing_field=True,
+            illum_smooth_mult=0.1,
+            gamma_reg_mult=0.01,
+            concealing_sparsity_mult=0.05,
+        ),
+    ),
+    optimizers={
+        "proposal_networks": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
+        },
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
+        },
+        "camera_opt": {
+            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=5000),
+        },
+        "illumination_mlp": {
+            "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
+            "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, max_steps=200000),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+)
 
 method_configs["nerfacto"] = TrainerConfig(
     method_name="nerfacto",
@@ -801,7 +850,14 @@ all_methods, all_descriptions = sort_methods(all_methods, all_descriptions)
 
 # Register all possible external methods which can be installed with Nerfstudio
 all_methods, all_descriptions = merge_methods(
-    all_methods, all_descriptions, *sort_methods(*get_external_methods()), overwrite=False
+    all_methods, 
+    all_descriptions, 
+    {
+        "lowlight-nerfacto": method_configs["lowlight-nerfacto"]
+    },
+    {
+        "lowlight-nerfacto": "Low-light optimized Nerfacto with illumination decomposition and noise suppression"
+    }
 )
 
 AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
